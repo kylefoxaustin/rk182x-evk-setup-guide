@@ -20,9 +20,10 @@ This guide takes you from *"I just opened the box and I have no idea what any of
 8. [Running the DeepSeek-R1-Distill-Qwen-1.5B hello-world demo](#8-running-the-deepseek-r1-distill-qwen-15b-hello-world-demo-end-to-end)
 9. [Going bigger: running Qwen3-8B (a 7B-class model) on the RK1828](#9-going-bigger-running-qwen3-8b-a-7b-class-model-on-the-rk1828)
 10. [Seeing things: running a vision-language model (Qwen2-VL-2B) on the RK1828](#10-seeing-things-running-a-vision-language-model-qwen2-vl-2b-on-the-rk1828)
-11. [Where to go next](#11-where-to-go-next)
-12. [Glossary](#12-glossary)
-13. [Useful links](#13-useful-links)
+11. [Performance and benchmarks (what's actually published)](#11-performance-and-benchmarks-whats-actually-published)
+12. [Where to go next](#12-where-to-go-next)
+13. [Glossary](#13-glossary)
+14. [Useful links](#14-useful-links)
 
 ---
 
@@ -52,7 +53,7 @@ Make sure your box contains all three pieces. If you bought the kit assembled, t
 
 - The **power supply** that came in the box. The carrier board accepts **24 V DC** through a barrel jack, or **12 V / 48 V** through an ATX-style connector. Use the adapter Firefly shipped; do not substitute a random laptop charger.
 
-> **Warning:** Plugging in a power supply with the wrong voltage or polarity can permanently destroy the board. If your kit shipped without a supply, check the [specification PDF](#13-useful-links) for the exact voltage and barrel-jack polarity before buying one.
+> **Warning:** Plugging in a power supply with the wrong voltage or polarity can permanently destroy the board. If your kit shipped without a supply, check the [specification PDF](#14-useful-links) for the exact voltage and barrel-jack polarity before buying one.
 
 ### 2.3 Cables and peripherals
 
@@ -170,7 +171,7 @@ password: firefly
 
 **How you know it worked:** You are looking at a desktop or a shell prompt that accepts commands.
 
-> **If this didn't work:** If the default credentials are rejected, the image on your board may differ. Check the exact default login for your image's release notes on the [Firefly download page](#13-useful-links). The `root` password on many Firefly images is also `firefly`.
+> **If this didn't work:** If the default credentials are rejected, the image on your board may differ. Check the exact default login for your image's release notes on the [Firefly download page](#14-useful-links). The `root` password on many Firefly images is also `firefly`.
 
 ### Step 4.3 — Open a terminal and confirm you are on the RK3588 main module
 
@@ -972,7 +973,76 @@ The model will stream back a description grounded in the actual picture you sent
 
 ---
 
-## 11. Where to go next
+## 11. Performance and benchmarks (what's actually published)
+
+A fair question after all this work: *how fast is it, really, and was the accelerator worth it?* Here is the honest state of public data as of this writing.
+
+> **Note — read this first:** There is **no official, model-by-model benchmark table** published for the RK1820/RK1828 yet. The numbers below are the *actual figures that have appeared in public sources* — nothing here is invented or interpolated. Where a source only gives a range, this guide gives you the range, not a fake precise number. Treat these as ballpark, then **measure your own** (Step 11.1).
+
+### 11.1 The numbers that are actually published
+
+| Figure | Value | What it covers | Source |
+| --- | --- | --- | --- |
+| LLM/VLM throughput (range) | **~59–180 tokens/s** | Across Qwen2.5, Qwen3, FastVLM, and InternVL3.5 on the RK1820/RK1828 — an *aggregate range*, not per-model | CNX Software writeup |
+| Vendor throughput claim | **"exceeding 100 tokens/second"** | Firefly's headline figure for the kit (model/quant unspecified) | Firefly product page |
+| Vendor latency claim | **"as low as 0.1 seconds"** end-to-end | Firefly's headline latency figure | Firefly product page |
+| RK3588-alone baseline | **~14 tokens/s** | Qwen2 1.8B at **W8A8** on the RK3588's *own* NPU, **without** an accelerator — the "before" picture | CNX Software writeup |
+| Compute | **20 TOPS (INT8)** | Both RK1820 and RK1828 | Firefly spec / product page |
+| On-chip memory | RK1820 **2.5 GB** · RK1828 **5 GB** | Caps model size: ~3B vs ~7B-class params | Firefly spec / product page |
+
+> **Tip — the one comparison that's genuinely meaningful:** the RK3588 *by itself* manages roughly **14 tokens/s** on a sub-2B model, while the same family of accelerators reaches **tens to ~180 tokens/s** on models several times larger. That gap — bigger models *and* much faster — is the entire reason the RK1820/RK1828 exists. That is the comparison the published data actually supports.
+
+### 11.2 What the accelerator is **not** for (also from the data)
+
+Independent testing ran classic computer-vision CNNs — **YOLOv5s** and **ResNet50** — on the RK1828 and found **no advantage over the RK3588's own 6-TOPS NPU**. (No numbers were published, only that qualitative result.)
+
+> **Warning:** Do not buy or use the RK1820/RK1828 expecting faster *image classification or object detection*. These accelerators are tuned for the memory-bound, token-by-token math of **LLMs and VLMs**. For ordinary CNN vision work, keep using the RK3588's built-in NPU (that's what the RKNN model zoo targets). Section 10's VLM still benefits because its *language* half is the heavy part.
+
+### 11.3 Why a clean per-model table doesn't exist yet (and the honest caveats)
+
+Token-rate numbers swing wildly with factors no single table can capture, which is exactly why the published figure is a *range*:
+
+- **Quantization** — `w4a16` (Sections 8–10) is faster and smaller than `w8a8`; comparing across them isn't apples-to-apples.
+- **Model size** — a 1.5B model runs many times faster than an 8B one on the same chip.
+- **Context length** — long prompts slow the first token (prefill) dramatically.
+- **Prefill vs decode** — "time to first token" and "tokens/s while generating" are different metrics; sources rarely separate them.
+- **Thermals** — without the heatsink and performance work mode (Step 9.4), the chip throttles and your numbers drop.
+
+### 11.4 Measure it yourself (the only numbers you can fully trust)
+
+Your own measurement on your own model beats any table. The RKLLM demo prints performance stats, and `rknn-smi` shows what the chip is doing.
+
+1. **Step 11.4.1 — Lock in performance mode** on the board so you're measuring the chip at full clock, not throttled (from Section 6.4 / 9.4):
+
+   ```
+   sudo rknn-smi set -t work_mode -s 2
+   ```
+
+2. **Step 11.4.2 — Run a model and read the printed stats.** The `rkllm_api_demo` reports timing — typically a **prefill** figure (time to first token) and a **generate** figure (tokens/s) — after each response. Run your model from Section 8 or 9:
+
+   ```
+   ./llm_demo /home/firefly/Qwen3-8B.rkllm 4096 8192
+   ```
+
+   **How you know it worked:** After the model answers, the demo prints lines reporting tokens and timing (e.g. a prefill time in ms and a decode rate in tokens/s). That decode rate is *your* real-world throughput for *that* model and quantization.
+
+3. **Step 11.4.3 — Watch utilization and power live** in a second terminal while it generates:
+
+   ```
+   watch -n 1 'sudo rknn-smi info -w'
+   ```
+
+   ```
+   sudo rknn-smi info -t power
+   ```
+
+   **How you know it worked:** Utilization climbs while the model generates and power draw rises — confirming the work is actually running on the accelerator, and giving you a tokens-per-watt sense of efficiency.
+
+> **Tip:** When you report or compare numbers, always state the **model**, the **quantization** (`w4a16`/`w8a8`), the **context length**, and whether you separated **prefill** from **decode**. A bare "X tokens/s" with none of that context is exactly why no trustworthy single table exists.
+
+---
+
+## 12. Where to go next
 
 You ran a 1.5B model, an 8B model, **and** a vision-language model. The RK1828's 5 GB of on-chip RAM can do still more. From here:
 
@@ -986,7 +1056,7 @@ You ran a 1.5B model, an 8B model, **and** a vision-language model. The RK1828's
 
 ---
 
-## 12. Glossary
+## 13. Glossary
 
 - **RK182X** — Firefly/Rockchip's umbrella name for this generation of AI-accelerator modules, covering the **RK1820** (2.5 GB on-chip DRAM, ~3B-parameter LLMs) and **RK1828** (5 GB on-chip DRAM, ~7B-parameter LLMs). Both provide 20 TOPS at INT8.
 - **SoM (System on Module)** — A complete tiny computer (CPU, RAM, storage) on one small board that plugs into a larger carrier board. Here, the **Core-3588JD4** is the SoM; it runs Linux.
@@ -1000,7 +1070,7 @@ You ran a 1.5B model, an 8B model, **and** a vision-language model. The RK1828's
 
 ---
 
-## 13. Useful links
+## 14. Useful links
 
 Every link below was verified to load at the time of writing.
 
