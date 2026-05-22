@@ -18,9 +18,10 @@ This guide takes you from *"I just opened the box and I have no idea what any of
 6. [Verifying the RK1828 is alive](#6-verifying-the-rk1828-is-alive)
 7. [Installing RKLLM-Toolkit on the host PC](#7-installing-rkllm-toolkit-on-the-host-pc)
 8. [Running the DeepSeek-R1-Distill-Qwen-1.5B hello-world demo](#8-running-the-deepseek-r1-distill-qwen-15b-hello-world-demo-end-to-end)
-9. [Where to go next](#9-where-to-go-next)
-10. [Glossary](#10-glossary)
-11. [Useful links](#11-useful-links)
+9. [Going bigger: running Qwen3-8B (a 7B-class model) on the RK1828](#9-going-bigger-running-qwen3-8b-a-7b-class-model-on-the-rk1828)
+10. [Where to go next](#10-where-to-go-next)
+11. [Glossary](#11-glossary)
+12. [Useful links](#12-useful-links)
 
 ---
 
@@ -50,7 +51,7 @@ Make sure your box contains all three pieces. If you bought the kit assembled, t
 
 - The **power supply** that came in the box. The carrier board accepts **24 V DC** through a barrel jack, or **12 V / 48 V** through an ATX-style connector. Use the adapter Firefly shipped; do not substitute a random laptop charger.
 
-> **Warning:** Plugging in a power supply with the wrong voltage or polarity can permanently destroy the board. If your kit shipped without a supply, check the [specification PDF](#11-useful-links) for the exact voltage and barrel-jack polarity before buying one.
+> **Warning:** Plugging in a power supply with the wrong voltage or polarity can permanently destroy the board. If your kit shipped without a supply, check the [specification PDF](#12-useful-links) for the exact voltage and barrel-jack polarity before buying one.
 
 ### 2.3 Cables and peripherals
 
@@ -168,7 +169,7 @@ password: firefly
 
 **How you know it worked:** You are looking at a desktop or a shell prompt that accepts commands.
 
-> **If this didn't work:** If the default credentials are rejected, the image on your board may differ. Check the exact default login for your image's release notes on the [Firefly download page](#11-useful-links). The `root` password on many Firefly images is also `firefly`.
+> **If this didn't work:** If the default credentials are rejected, the image on your board may differ. Check the exact default login for your image's release notes on the [Firefly download page](#12-useful-links). The `root` password on many Firefly images is also `firefly`.
 
 ### Step 4.3 — Open a terminal and confirm you are on the RK3588 main module
 
@@ -678,11 +679,117 @@ Because DeepSeek-R1 is a *reasoning* model, you may also see a `<think>...</thin
 
 ---
 
-## 9. Where to go next
+## 9. Going bigger: running Qwen3-8B (a 7B-class model) on the RK1828
 
-You ran a 1.5B model. The RK1828's 5 GB of on-chip RAM can do a lot more. From here:
+The 1.5B model in Section 8 was the warm-up. The reason you bought the **RK1828** (with its 5 GB of on-chip RAM) is to run the *7B-class* models — and that is exactly what we'll do now. The workflow is identical to Section 8; only the model and a few size-related settings change. If Section 8 worked, this will too.
 
-- **Bigger text models — Qwen2.5 / Qwen3 7B:** The 7B-class models are the headline use case for the RK1828. Follow the same convert-and-deploy flow with the larger model. Start from Firefly's AI guide and Rockchip's example zoo: <https://wiki.t-firefly.com/en/AIO-GS1N2-RK182X/ai_rk182x.html>
+> **Note — a naming clarification, because it trips everyone up:** There is **no model literally called "Qwen3-7B."** Qwen3's dense lineup goes 0.6B → 1.7B → 4B → **8B** → 14B → … The right "7B-class" choices are:
+> - **`Qwen/Qwen3-8B`** — the current-generation (Qwen3) model, **8.2 B parameters**, Apache-2.0. This guide uses it.
+> - **`Qwen/Qwen2.5-7B-Instruct`** — the previous-generation true "7B" (7.61 B params), if you specifically want a 7B. The steps below work for it too — just swap the repo id.
+>
+> Both sit right at the top of what the RK1828's 5 GB can hold, which is why **`w4a16` quantization is mandatory here** (an unquantized 8B model is ~16 GB and will not fit; at 4-bit it's roughly 4–5 GB).
+
+> **Warning:** This will **not** run on the RK1820 (2.5 GB) — an 8B model won't fit even at 4-bit. If you have the RK1820, stick to ≤3B models (e.g. the DeepSeek-R1-Distill-Qwen-1.5B from Section 8, or Qwen3-1.7B).
+
+### Step 9.1 — (Host) Download the Qwen3-8B weights
+
+On your host PC, with the `RKLLM-Toolkit` conda environment **active** (`conda activate RKLLM-Toolkit` — see Section 7), download the model the same way you did the DeepSeek model:
+
+```
+huggingface-cli download Qwen/Qwen3-8B --local-dir ./Qwen3-8B
+```
+
+**How you know it worked:** The `./Qwen3-8B` folder contains `config.json`, the tokenizer files, and several `*.safetensors` weight shards (this is ~16 GB — it will take a while).
+
+> **If this didn't work:** A 401/403 auth error means you need to authenticate — run `huggingface-cli login`, paste a token from your Hugging Face account, and retry. Qwen3-8B is Apache-2.0 and ungated, so no access request is needed.
+
+### Step 9.2 — (Host) Convert and quantize to `.rkllm`
+
+Reuse the export script from Section 8.2 (`~/rknn-llm/examples/rkllm_api_demo/export_rkllm.py`). Open it and change three things:
+
+1. **Step 9.2.1 — Point it at the new model folder** and keep `w4a16` quantization. The build call should look like:
+
+   ```
+   ret = llm.load_huggingface(model="./Qwen3-8B")
+   ret = llm.build(do_quantization=True, optimization_level=1, quantized_dtype="w4a16", target_platform="RK1828")
+   ret = llm.export_rkllm("./Qwen3-8B.rkllm")
+   ```
+
+   > **Tip:** `w4a16` is not optional for an 8B model on this hardware — it's what makes it fit. Do **not** switch to `w8a8` here unless you have measured that it fits; 8-bit weights roughly double the memory footprint.
+
+2. **Step 9.2.2 — Make sure your toolkit version actually supports Qwen3.** Qwen3 support landed in the **v1.2.x** RKLLM-Toolkit series. Check what you installed:
+
+   ```
+   python -c "import rkllm; print(rkllm.__version__)"
+   ```
+
+   If this prints something older than `1.2.0`, go back to Section 7.4 and install a newer wheel from the `rkllm-toolkit/` folder (pull the latest `rknn-llm` repo first).
+
+3. **Step 9.2.3 — Run the conversion:**
+
+   ```
+   python export_rkllm.py
+   ```
+
+   **How you know it worked:** The toolkit streams through *loading → quantizing → building*, then writes `Qwen3-8B.rkllm`. Confirm its size — a 4-bit 8B model lands around 4–5 GB:
+
+   ```
+   ls -lh Qwen3-8B.rkllm
+   ```
+
+   > **If this didn't work:** *Out-of-memory on the host during conversion* is common for 8B models — quantizing one can need **32 GB+ of host RAM**. Close everything else, add swap, or use a bigger machine; the conversion is a one-time cost. An *"unsupported model architecture: qwen3"* error means your toolkit is pre-1.2.x — upgrade it (Step 9.2.2).
+
+### Step 9.3 — (Host → Board) Copy the model over
+
+Same `scp` as Section 8.3 (replace `BOARD_IP` with the board's address from `ip addr`). Note this file is ~3× larger than the 1.5B one, so the transfer takes longer:
+
+```
+scp ./Qwen3-8B.rkllm firefly@BOARD_IP:/home/firefly/
+```
+
+**How you know it worked:** The transfer reaches 100%, and `ls -lh ~/Qwen3-8B.rkllm` on the board shows the ~4–5 GB file.
+
+### Step 9.4 — (Board) Set the accelerator to performance mode
+
+An 8B model works the NPU hard. Before running, put the RK1828 into its high-performance work mode (from Section 6.4) so it doesn't run at a throttled clock:
+
+```
+sudo rknn-smi set -t work_mode -s 2
+```
+
+**How you know it worked:** The command returns without error. You can confirm the device is healthy and reporting power with `sudo rknn-smi info -w`.
+
+### Step 9.5 — (Board) Run it
+
+You already built the `llm_demo` binary in Section 8.4 — reuse it. Just point it at the new model. An 8B model wants a larger context budget than the 1.5B did, so give it room (use the values the demo's usage text specifies; these are typical):
+
+```
+cd ~/rknn-llm/examples/rkllm_api_demo/build
+```
+
+```
+./llm_demo /home/firefly/Qwen3-8B.rkllm 4096 8192
+```
+
+**How you know it worked:** The model takes noticeably longer to load than the 1.5B did (it's reading 4–5 GB into the accelerator's RAM), then you reach the interactive prompt. Ask it something:
+
+```
+**User:** Explain what an NPU is to a ten-year-old, in three sentences.
+```
+
+It will stream a coherent, on-topic answer. Because Qwen3 is a hybrid reasoning model, you may see a `<think>...</think>` block before the final answer (Qwen3 can toggle this "thinking mode" — controlled by the chat template's `enable_thinking` flag).
+
+**How you know the whole thing worked:** You're getting fluent, multi-sentence answers from an 8-billion-parameter model running entirely on a stick-of-RAM-shaped chip — expect roughly **15–40 tokens/s** for an 8B at this quantization (smaller and lighter-quantized models in Section 8 run much faster; the published 100+ tokens/s figures are for smaller models). 🎉
+
+> **If this didn't work:** *Crash on load / out-of-memory on the board* means the model didn't fit — verify you exported with `w4a16` (not `w8a8`) and that you're on the RK1828, not the RK1820. *Loads but emits gibberish* almost always means the board's RKLLM **runtime** version doesn't match the **toolkit** version that built the file — rebuild `llm_demo` from the same `rknn-llm` release you used on the host (Section 8.4). *Painfully slow* usually means you skipped Step 9.4 (performance work mode) or the heatsink/fan isn't doing its job and the chip is thermal-throttling.
+
+---
+
+## 10. Where to go next
+
+You ran a 1.5B model **and** an 8B model. The RK1828's 5 GB of on-chip RAM can do still more. From here:
+
+- **The other 7B-class option — Qwen2.5-7B-Instruct:** If you want a true 7B (7.61 B params) instead of Qwen3-8B, repeat Section 9 with the repo id `Qwen/Qwen2.5-7B-Instruct`. Everything else is identical.
 - **Vision-language models (VLMs):** Models like Qwen2-VL, InternVL, and MiniCPM-V let the board *see* images and talk about them. The multimodal demo lives at <https://github.com/airockchip/rknn-llm/tree/main/examples/multimodal_model_demo>
 - **The RKNN3 model zoo** — ready-made examples (LLMs, VLMs, and classic vision models) specifically targeting the RK1820/RK1828 with the RKNN3 toolkit: <https://github.com/airockchip/rknn3-model-zoo>
 - **Rockchip's RKLLM home base** — release notes, supported-model list, and runtime updates: <https://github.com/airockchip/rknn-llm>
@@ -692,7 +799,7 @@ You ran a 1.5B model. The RK1828's 5 GB of on-chip RAM can do a lot more. From h
 
 ---
 
-## 10. Glossary
+## 11. Glossary
 
 - **RK182X** — Firefly/Rockchip's umbrella name for this generation of AI-accelerator modules, covering the **RK1820** (2.5 GB on-chip DRAM, ~3B-parameter LLMs) and **RK1828** (5 GB on-chip DRAM, ~7B-parameter LLMs). Both provide 20 TOPS at INT8.
 - **SoM (System on Module)** — A complete tiny computer (CPU, RAM, storage) on one small board that plugs into a larger carrier board. Here, the **Core-3588JD4** is the SoM; it runs Linux.
@@ -706,7 +813,7 @@ You ran a 1.5B model. The RK1828's 5 GB of on-chip RAM can do a lot more. From h
 
 ---
 
-## 11. Useful links
+## 12. Useful links
 
 Every link below was verified to load at the time of writing.
 
@@ -726,6 +833,11 @@ Every link below was verified to load at the time of writing.
 - RKLLM examples (api / multimodal / server demos): <https://github.com/airockchip/rknn-llm/tree/main/examples>
 - RKNN3 model zoo (RK1820/RK1828): <https://github.com/airockchip/rknn3-model-zoo>
 - RKNN model zoo (RK3588-era vision models): <https://github.com/airockchip/rknn_model_zoo>
+
+**Models (Hugging Face)**
+- DeepSeek-R1-Distill-Qwen-1.5B (Section 8 demo): <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B>
+- Qwen3-8B (Section 9 walkthrough): <https://huggingface.co/Qwen/Qwen3-8B>
+- Qwen2.5-7B-Instruct (true 7B alternative): <https://huggingface.co/Qwen/Qwen2.5-7B-Instruct>
 
 **Independent coverage**
 - CNX Software — RK1820/RK1828 modules, devkits, and benchmarks: <https://www.cnx-software.com/2025/12/30/rockchip-rk1820-rk1828-so-dimm-and-m-2-llm-vlm-ai-accelerator-modules-devkits-and-benchmarks/>
