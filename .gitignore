@@ -1,0 +1,43 @@
+# This repository is intentionally documentation-only.
+# The entries below keep large build/firmware/model artifacts out of git
+# in case you clone the SDK or download images into this folder while working.
+
+# Firmware images and flashing artifacts
+*.img
+*.img.gz
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+update.img
+MiniLoaderAll.bin
+parameter.txt
+
+# AI model weights and converted models (these are huge)
+*.rkllm
+*.rknn
+*.gguf
+*.safetensors
+*.bin
+*.onnx
+*.pt
+*.pth
+
+# Python / conda environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.whl
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Logs
+*.log
