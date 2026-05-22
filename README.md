@@ -19,9 +19,10 @@ This guide takes you from *"I just opened the box and I have no idea what any of
 7. [Installing RKLLM-Toolkit on the host PC](#7-installing-rkllm-toolkit-on-the-host-pc)
 8. [Running the DeepSeek-R1-Distill-Qwen-1.5B hello-world demo](#8-running-the-deepseek-r1-distill-qwen-15b-hello-world-demo-end-to-end)
 9. [Going bigger: running Qwen3-8B (a 7B-class model) on the RK1828](#9-going-bigger-running-qwen3-8b-a-7b-class-model-on-the-rk1828)
-10. [Where to go next](#10-where-to-go-next)
-11. [Glossary](#11-glossary)
-12. [Useful links](#12-useful-links)
+10. [Seeing things: running a vision-language model (Qwen2-VL-2B) on the RK1828](#10-seeing-things-running-a-vision-language-model-qwen2-vl-2b-on-the-rk1828)
+11. [Where to go next](#11-where-to-go-next)
+12. [Glossary](#12-glossary)
+13. [Useful links](#13-useful-links)
 
 ---
 
@@ -51,7 +52,7 @@ Make sure your box contains all three pieces. If you bought the kit assembled, t
 
 - The **power supply** that came in the box. The carrier board accepts **24 V DC** through a barrel jack, or **12 V / 48 V** through an ATX-style connector. Use the adapter Firefly shipped; do not substitute a random laptop charger.
 
-> **Warning:** Plugging in a power supply with the wrong voltage or polarity can permanently destroy the board. If your kit shipped without a supply, check the [specification PDF](#12-useful-links) for the exact voltage and barrel-jack polarity before buying one.
+> **Warning:** Plugging in a power supply with the wrong voltage or polarity can permanently destroy the board. If your kit shipped without a supply, check the [specification PDF](#13-useful-links) for the exact voltage and barrel-jack polarity before buying one.
 
 ### 2.3 Cables and peripherals
 
@@ -169,7 +170,7 @@ password: firefly
 
 **How you know it worked:** You are looking at a desktop or a shell prompt that accepts commands.
 
-> **If this didn't work:** If the default credentials are rejected, the image on your board may differ. Check the exact default login for your image's release notes on the [Firefly download page](#12-useful-links). The `root` password on many Firefly images is also `firefly`.
+> **If this didn't work:** If the default credentials are rejected, the image on your board may differ. Check the exact default login for your image's release notes on the [Firefly download page](#13-useful-links). The `root` password on many Firefly images is also `firefly`.
 
 ### Step 4.3 — Open a terminal and confirm you are on the RK3588 main module
 
@@ -785,12 +786,198 @@ It will stream a coherent, on-topic answer. Because Qwen3 is a hybrid reasoning 
 
 ---
 
-## 10. Where to go next
+## 10. Seeing things: running a vision-language model (Qwen2-VL-2B) on the RK1828
 
-You ran a 1.5B model **and** an 8B model. The RK1828's 5 GB of on-chip RAM can do still more. From here:
+So far the board has only read and written *text*. A **vision-language model (VLM)** can also *look at a picture* and answer questions about it — "what's in this photo?", "read the sign in this image", "describe this chart." We'll run **`Qwen/Qwen2-VL-2B-Instruct`** (2 B params, Apache-2.0), the model Rockchip's own multimodal demo is built around.
+
+> **Note — why this section is more involved than Sections 8 and 9:** A VLM is really *two* models bolted together — a **vision encoder** that turns an image into numbers, and a **language model** that turns those numbers (plus your text) into an answer. Rockchip splits them across **two different toolkits and two output files**:
+> - The **vision encoder** is converted to an **`.rknn`** file using **RKNN-Toolkit2** (the general neural-network toolkit).
+> - The **language model** is converted to an **`.rkllm`** file using **RKLLM-Toolkit** (the same one from Section 7).
+>
+> So before converting, you need *both* toolkits installed on the host. Step 10.1 adds the one you're missing.
+
+> **Tip:** We use the small **2B** VLM because it converts quickly and leaves plenty of headroom on the RK1828. Once this works, the same demo supports the larger **Qwen2-VL-7B** and newer VLMs (Qwen2.5-VL, Qwen3-VL, MiniCPM-V-2.6, InternVL3) — see the demo's README for the exact per-model flags.
+
+### Step 10.1 — (Host) Install RKNN-Toolkit2 (the second toolkit)
+
+In Section 7 you installed RKLLM-Toolkit. VLMs also need **RKNN-Toolkit2** for the vision half. Give it its own conda environment (it, too, wants Python 3.8) so it can't collide with the RKLLM env.
+
+1. **Step 10.1.1 — Create and activate a dedicated environment:**
+
+   ```
+   conda create -n RKNN-Toolkit2 python=3.8
+   ```
+
+   ```
+   conda activate RKNN-Toolkit2
+   ```
+
+   **How you know it worked:** Your prompt shows `(RKNN-Toolkit2)` and `python --version` reports `Python 3.8.x`.
+
+2. **Step 10.1.2 — Install the RKNN-Toolkit2 wheel.** It is distributed in Rockchip's `rknn-toolkit2` repository. Clone it and install the wheel by its real filename (use `ls` to find the exact name, just like Section 7.4):
+
+   ```
+   git clone https://github.com/airockchip/rknn-toolkit2.git
+   ```
+
+   ```
+   ls rknn-toolkit2/rknn-toolkit2/packages/
+   ```
+
+   You'll see a wheel like `rknn_toolkit2-2.x.x+...-cp38-cp38-linux_x86_64.whl`. Install it (substitute the real filename):
+
+   ```
+   pip3 install ./rknn-toolkit2/rknn-toolkit2/packages/rknn_toolkit2-2.3.0-cp38-cp38-linux_x86_64.whl
+   ```
+
+   **How you know it worked:** `pip3` reports `Successfully installed rknn-toolkit2-...`, and this prints a version with no error:
+
+   ```
+   python -c "from rknn.api import RKNN; print('RKNN-Toolkit2 OK')"
+   ```
+
+   > **If this didn't work:** `is not a supported wheel on this platform` again means you're not in the Python 3.8 env or you're on the wrong architecture (x86-64 host only). Re-activate `RKNN-Toolkit2` and retry.
+
+### Step 10.2 — (Host) Download the Qwen2-VL-2B weights
+
+With **either** conda env active (you only need the files for now), download the model:
+
+```
+huggingface-cli download Qwen/Qwen2-VL-2B-Instruct --local-dir ./Qwen2-VL-2B-Instruct
+```
+
+**How you know it worked:** `./Qwen2-VL-2B-Instruct` contains `config.json`, a `preprocessor_config.json` (the giveaway that this is a vision model), the tokenizer, and `*.safetensors` weights.
+
+### Step 10.3 — (Host) Open the multimodal demo
+
+The whole VLM pipeline — both exporters and the on-board C++ app — lives in one folder of the `rknn-llm` repo you already cloned in Section 7.3:
+
+```
+cd ~/rknn-llm/examples/multimodal_model_demo
+```
+
+```
+ls
+```
+
+**How you know it worked:** You see an `export/` folder (the conversion scripts), a `deploy/` folder (the board-side C++ app and `build-linux.sh`), a `data/` folder, and a demo `README` describing the per-model steps. Read that README — it lists the exact flags for each supported model.
+
+### Step 10.4 — (Host) Export the vision encoder to `.rknn`
+
+This is the part that needs RKNN-Toolkit2. The vision encoder is first exported to ONNX, then converted to `.rknn`.
+
+1. **Step 10.4.1 — Activate the RKNN env** (the vision toolkit):
+
+   ```
+   conda activate RKNN-Toolkit2
+   ```
+
+2. **Step 10.4.2 — Export the vision encoder to ONNX.** From the `export/` folder, run the Qwen2-VL vision exporter, pointing it at your model path (check the script's argument names against the demo README — they occasionally change):
+
+   ```
+   cd export
+   ```
+
+   ```
+   python export_vision_qwen2.py --path ../../Qwen2-VL-2B-Instruct
+   ```
+
+3. **Step 10.4.3 — Convert that ONNX to `.rknn` for the RK1828:**
+
+   ```
+   python export_vision_rknn.py --target-platform RK1828
+   ```
+
+   **How you know it worked:** A `.rknn` file (the vision encoder) appears in the folder, and the script ends without errors.
+
+   > **If this didn't work:** An `Unknown target platform` or similar error means the platform string is wrong — it must be exactly `RK1828` (or `RK1820`). If the ONNX export itself fails, confirm `--path` points at the folder that actually contains `config.json`.
+
+### Step 10.5 — (Host) Export the language model to `.rkllm`
+
+Now the language half — this needs the **RKLLM** toolkit instead.
+
+1. **Step 10.5.1 — Switch environments:**
+
+   ```
+   conda activate RKLLM-Toolkit
+   ```
+
+2. **Step 10.5.2 — (If the demo requires it) build the quantization calibration data.** VLM language models are quantized using image-derived embeddings; the demo provides a helper to generate them:
+
+   ```
+   python make_input_embeds_for_quantize.py --path ../../Qwen2-VL-2B-Instruct
+   ```
+
+3. **Step 10.5.3 — Export the `.rkllm`** with `w4a16` quantization for the RK1828:
+
+   ```
+   python export_rkllm.py --path ../../Qwen2-VL-2B-Instruct --target-platform RK1828
+   ```
+
+   **How you know it worked:** A `.rkllm` file appears alongside the `.rknn` from Step 10.4. You now have **two** model files — the vision encoder (`.rknn`) and the language model (`.rkllm`) — which together make the VLM.
+
+   > **If this didn't work:** An `unsupported model architecture` error means your RKLLM-Toolkit predates Qwen2-VL support — upgrade the wheel (Section 7.4 / Step 9.2.2). Out-of-memory during quantization: same fix as Section 9 — more host RAM or swap.
+
+### Step 10.6 — (Host → Board) Copy both model files and a test image
+
+Send *both* outputs plus a picture to ask about (replace `BOARD_IP`; filenames will match what the exporters produced):
+
+```
+scp ./*.rknn ./*.rkllm firefly@BOARD_IP:/home/firefly/
+```
+
+```
+scp ./demo.jpg firefly@BOARD_IP:/home/firefly/
+```
+
+**How you know it worked:** On the board, `ls -lh ~/` lists the `.rknn`, the `.rkllm`, and your image.
+
+> **Tip:** Don't have a test image handy? The demo's `data/` folder ships with sample images — copy one of those instead.
+
+### Step 10.7 — (Board) Build the multimodal demo
+
+The VLM app is a different binary from the text demo, so build it separately **on the board**:
+
+```
+cd ~/rknn-llm/examples/multimodal_model_demo/deploy
+```
+
+```
+bash build-linux.sh
+```
+
+**How you know it worked:** Compilation finishes without errors and produces an executable (commonly under `install/` or `build/`, named like `llm_multimodal_demo` or `demo`).
+
+> **If this didn't work:** Missing compiler → `sudo apt install -y build-essential cmake`. If it can't find the runtime libraries, confirm both `librkllmrt.so` (LLM runtime) and `librknnrt.so` (RKNN runtime) are present on the board — VLMs need *both* at runtime, not just one.
+
+### Step 10.8 — (Board) Run it: ask the model about a picture
+
+Run the demo, giving it the language model, the vision encoder, and your image (argument order is printed if you run the binary with no arguments; a typical form is shown):
+
+```
+./llm_multimodal_demo /home/firefly/Qwen2-VL-2B-Instruct.rkllm /home/firefly/Qwen2-VL-2B-Instruct.rknn 2048 4096 /home/firefly/demo.jpg
+```
+
+**How you know it worked:** Both models load (you'll see the `.rknn` vision encoder *and* the `.rkllm` language model initialize), then you get a prompt. Ask about the image:
+
+```
+**User:** What is in this image? Describe it in one sentence.
+```
+
+The model will stream back a description grounded in the actual picture you sent.
+
+**How you know the whole thing worked:** The answer correctly references what's *in your image* — not a generic guess. Your desk-side stick-of-RAM chip is now doing computer vision *and* language at once. 👁️🗣️
+
+> **If this didn't work:** *Crash on load* → check both files copied and that you're on the RK1828. *It describes the wrong thing or hallucinates the image* → the vision `.rknn` and language `.rkllm` were likely exported from different model copies or mismatched toolkit/runtime versions; re-export both from the same model folder and rebuild the demo from the same `rknn-llm` release. *Garbled text* → same toolkit-vs-runtime version mismatch as the text demos.
+
+---
+
+## 11. Where to go next
+
+You ran a 1.5B model, an 8B model, **and** a vision-language model. The RK1828's 5 GB of on-chip RAM can do still more. From here:
 
 - **The other 7B-class option — Qwen2.5-7B-Instruct:** If you want a true 7B (7.61 B params) instead of Qwen3-8B, repeat Section 9 with the repo id `Qwen/Qwen2.5-7B-Instruct`. Everything else is identical.
-- **Vision-language models (VLMs):** Models like Qwen2-VL, InternVL, and MiniCPM-V let the board *see* images and talk about them. The multimodal demo lives at <https://github.com/airockchip/rknn-llm/tree/main/examples/multimodal_model_demo>
+- **Bigger and newer VLMs:** The same multimodal demo from Section 10 also runs **Qwen2-VL-7B**, **Qwen2.5-VL**, **Qwen3-VL**, **MiniCPM-V-2.6**, and **InternVL3** — check the demo's per-model flags: <https://github.com/airockchip/rknn-llm/tree/main/examples/multimodal_model_demo>
 - **The RKNN3 model zoo** — ready-made examples (LLMs, VLMs, and classic vision models) specifically targeting the RK1820/RK1828 with the RKNN3 toolkit: <https://github.com/airockchip/rknn3-model-zoo>
 - **Rockchip's RKLLM home base** — release notes, supported-model list, and runtime updates: <https://github.com/airockchip/rknn-llm>
 - **Firefly's full Rockchip AI documentation:** <https://wiki.t-firefly.com/en/AIO-GS1N2-RK182X/ai_rockchip.html>
@@ -799,7 +986,7 @@ You ran a 1.5B model **and** an 8B model. The RK1828's 5 GB of on-chip RAM can d
 
 ---
 
-## 11. Glossary
+## 12. Glossary
 
 - **RK182X** — Firefly/Rockchip's umbrella name for this generation of AI-accelerator modules, covering the **RK1820** (2.5 GB on-chip DRAM, ~3B-parameter LLMs) and **RK1828** (5 GB on-chip DRAM, ~7B-parameter LLMs). Both provide 20 TOPS at INT8.
 - **SoM (System on Module)** — A complete tiny computer (CPU, RAM, storage) on one small board that plugs into a larger carrier board. Here, the **Core-3588JD4** is the SoM; it runs Linux.
@@ -813,7 +1000,7 @@ You ran a 1.5B model **and** an 8B model. The RK1828's 5 GB of on-chip RAM can d
 
 ---
 
-## 12. Useful links
+## 13. Useful links
 
 Every link below was verified to load at the time of writing.
 
@@ -831,6 +1018,8 @@ Every link below was verified to load at the time of writing.
 **Rockchip — official GitHub**
 - RKLLM (toolkit + runtime): <https://github.com/airockchip/rknn-llm>
 - RKLLM examples (api / multimodal / server demos): <https://github.com/airockchip/rknn-llm/tree/main/examples>
+- Multimodal (VLM) demo: <https://github.com/airockchip/rknn-llm/tree/main/examples/multimodal_model_demo>
+- RKNN-Toolkit2 (vision-encoder conversion, used in Section 10): <https://github.com/airockchip/rknn-toolkit2>
 - RKNN3 model zoo (RK1820/RK1828): <https://github.com/airockchip/rknn3-model-zoo>
 - RKNN model zoo (RK3588-era vision models): <https://github.com/airockchip/rknn_model_zoo>
 
@@ -838,6 +1027,7 @@ Every link below was verified to load at the time of writing.
 - DeepSeek-R1-Distill-Qwen-1.5B (Section 8 demo): <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B>
 - Qwen3-8B (Section 9 walkthrough): <https://huggingface.co/Qwen/Qwen3-8B>
 - Qwen2.5-7B-Instruct (true 7B alternative): <https://huggingface.co/Qwen/Qwen2.5-7B-Instruct>
+- Qwen2-VL-2B-Instruct (Section 10 VLM walkthrough): <https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct>
 
 **Independent coverage**
 - CNX Software — RK1820/RK1828 modules, devkits, and benchmarks: <https://www.cnx-software.com/2025/12/30/rockchip-rk1820-rk1828-so-dimm-and-m-2-llm-vlm-ai-accelerator-modules-devkits-and-benchmarks/>
